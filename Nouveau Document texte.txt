@@ -1,0 +1,6 @@
+pip:
+
+	pip install fastapi
+	pip install uvicorn
+	pip install websocket
+	pip install python-socketio

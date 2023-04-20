@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Performance Test</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="js/socket.io.min.js"></script>
+    <script src="js/Worker.js"></script>
+    <script src="js/webSocketWorker.js"></script>
+    <script src="js/socketIOWorker.js"></script>
+    <script src="js/fullWebSocketWorker.js"></script>
+    <style>
+        html, body {
+            margin:0;
+            padding:0;
+            width:100%;
+            height:100%;
+        }
+        body > div{
+            background-color:#FFF;
+            margin-top:15px;
+            border:1px solid black;
+            border-radius:15px;
+            padding:20px;
+            width:45%;
+            margin-left:2%;
+            float:left;
+            display:inline-block;
+        }
+
+        header {
+            background-color:#FFF;
+            border:1px solid black;
+            border-radius:15px;
+            padding:20px;
+            width:95%;
+            margin:auto;
+
+            margin-top:20px;
+            text-align:center;
+        }
+        header > label{
+            margin-left:40px;
+        }
+        header > button {
+            width:200px;
+            margin-top:10px;
+        }
+        .slide-container {
+            position: relative;
+            min-height: 50px;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            pointer-events: all;
+            width: 24px;
+            height: 24px;
+            background-color: #fff;
+            border-radius: 50%;
+            box-shadow: 0 0 0 1px #C6C6C6;
+            cursor: pointer;
+        }
+
+        input[type=range]::-moz-range-thumb {
+            -webkit-appearance: none;
+            pointer-events: all;
+            width: 24px;
+            height: 24px;
+            background-color: #fff;
+            border-radius: 50%;
+            box-shadow: 0 0 0 1px #C6C6C6;
+            cursor: pointer;
+        }
+
+        input[type=range]::-webkit-slider-thumb:hover {
+            background: #f7f7f7;
+        }
+
+        input[type=range]::-webkit-slider-thumb:active {
+            box-shadow: inset 0 0 3px #387bbe, 0 0 9px #387bbe;
+            -webkit-box-shadow: inset 0 0 3px #387bbe, 0 0 9px #387bbe;
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            height: 2px;
+            width: 100%;
+            position: absolute;
+            background-color: #C6C6C6;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+<header>
+    <label>Temps de travail:</label>
+    <input type="number" id="miliseconds" value="2000">
+    <label>Type d'architecture</label>
+    <select id="type">
+        <option value="0">WebSocket Client <-> Fastapi(Flask) Server</option>
+        <option value="1">SocketIO Client <-> SocketIO Server</option>
+        <option value="2">WebSocket Client <-> WebSocket Server</option>
+    </select>
+    <label>Nombre de worker:</label>
+    <input type="number" id="workers" value="10">
+    </br>
+    <button id="btn" onclick="makeTest(
+        document.getElementById('workers').value,
+        parseInt(document.getElementById('type').value),
+        document.getElementById('miliseconds').value
+    )" style="cursor:pointer">Lancer</button>
+    <div id="msg"></div>
+</header>
+
+
+<script>
+
+
+    function makeTest(nbWorker, type, workingTime) {
+
+        document.getElementById("msg").innerText = "Starting";
+        document.getElementById("btn").disabled = true;
+        let workers = [];
+        for(let i = 0; i < nbWorker; i++) {
+            if(type === 0) {
+                workers.push(new webSocketWorker(i));
+            } else if(type === 1) {
+                workers.push(new socketIOWorker(i));
+            } else if(type == 2) {
+                workers.push(new fullWebSocketWorker(i));
+            }
+
+        }
+
+        document.getElementById("msg").innerText = "Waiting connections ...";
+        let int = setInterval(() => {
+            for(el of workers) {
+                if(!el.isConnected) {
+                    return;
+                }
+            }
+
+            document.getElementById("msg").innerText = "Working ...";
+            for(el of workers) {
+                el.work();
+            }
+            setTimeout(function() {
+
+                document.getElementById("msg").innerText = "Ending ...";
+                displayStats(workers);
+            }, workingTime);
+            clearInterval(int);
+        },100);
+    }
+
+    function displayStats(workers) {
+        let data = [];
+        let errors = 0;
+        let minPing = 9999999;
+        let maxPing = 0;
+        let totalTime = 0;
+        let totalIndex = 0;
+        let maxIndexPing = 0;
+        for(el of workers) {
+            el.closed = true;
+            new Promise(resolve => {
+                const interval = setInterval(() => {
+                    if (el.doneClosed) {
+                        clearInterval(interval);
+                        resolve();
+                    }
+                }, 100); // Vérifier toutes les 100 millisecondes
+            });
+            errors += el.errors;
+            for(let i = 0; i < el.allPings.length; i++) {
+                totalTime += el.allPings[i];
+                if(el.allPings[i] < minPing) {
+                    minPing = el.allPings[i];
+                }
+                if(el.allPings[i] > maxPing) {
+                    maxPing = el.allPings[i];
+                }
+                data.push({ x:i, y:el.allPings[i], groupe: el.id});
+
+            }
+            totalIndex += el.allPings.length;
+            if(el.allPings.length > maxIndexPing) {
+                maxIndexPing = el.allPings.length;
+            }
+        }
+
+        let body = document.getElementsByTagName("body")[0];
+        let div = document.createElement("div");
+        let canvas = document.createElement("div");
+        let div2 = document.createElement("div");
+        div2.innerHTML = "<h3>Moyenne général: "+(totalTime/totalIndex).toFixed(3)+"ms</h3><h5>Min: "+minPing.toFixed(3)+"ms, Max: "+maxPing.toFixed(3)+"ms</h5><h6>Error: "+errors+"</h6>";
+
+
+        let containerSlide = document.createElement("div");
+        containerSlide.className = "slide-container";
+        let slidemax = document.createElement("input");
+        let slidemin = document.createElement("input");
+        slidemin.type="range"
+        slidemax.type="range";
+        slidemin.max=maxIndexPing;
+        slidemax.max=maxIndexPing;
+        slidemin.min=0;
+        slidemax.min=0;
+
+        slidemin.value = 0
+        slidemax.value = maxIndexPing;
+        slidemin.onchange = () => {
+            canvas = updateDisplay(div,canvas, slidemin, slidemax, data)
+        }
+        slidemax.onchange = () => {
+            canvas = updateDisplay(div,canvas, slidemin, slidemax, data)
+        }
+        containerSlide.appendChild(slidemin);
+        containerSlide.appendChild(slidemax);
+        div.appendChild(containerSlide);
+
+
+        div.appendChild(div2);
+
+        div.appendChild(canvas);
+
+        body.appendChild(div);
+
+        displaySchemPing(canvas,data);
+        document.getElementById("btn").disabled = false;
+        document.getElementById("msg").innerText = "";
+    }
+
+    function updateDisplay(baseDiv,canvas, elMin, elMax, data) {
+        let vmin = Math.min(parseInt(elMin.value), parseInt(elMax.value));
+        let vmax = Math.max(parseInt(elMin.value), parseInt(elMax.value));
+        baseDiv.removeChild(canvas);
+        canvas = document.createElement("div");
+        let newdata = []
+        data.forEach((e) => {
+            if(e.x >= vmin && e.x <= vmax) {
+                let z = {...e};
+                z.x -=vmin;
+                newdata.push(z);
+            }
+        });
+        baseDiv.appendChild(canvas);
+        displaySchemPing(canvas,newdata);
+        return canvas;
+
+    }
+
+    function displaySchemPing(el, data) {
+        // Données d'exemple avec une propriété "groupe"
+        /*const data = [
+        { x: 10, y: 20, groupe: 'A' },
+        { x: 40, y: 60, groupe: 'B' },
+        { x: 80, y: 30, groupe: 'A' },
+        { x: 100, y: 50, groupe: 'B' },
+        { x: 120, y: 70, groupe: 'A' }
+    ];*/
+
+        // Configuration du graphique
+
+
+
+        const margin = { top: 20, right: 20, bottom: 20, left: 30 },
+            width = document.body.clientWidth*0.45 - margin.left - margin.right,
+            height = 500 - margin.top - margin.bottom;
+
+        // Création du SVG
+        const svg = d3.select(el)
+            .append("svg")
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+
+
+        // Création des échelles
+        const xScale = d3.scaleLinear()
+            .domain([0, d3.max(data, d => d.x) * 1.1])
+            .range([0, width]);
+
+        const yScale = d3.scaleLinear()
+            .domain([0, d3.max(data, d => d.y) * 1.1])
+            .range([height, 0]);
+
+        // Échelle de couleurs pour les groupes
+        /*const colorScale = d3.scaleOrdinal()
+        .domain(Array.from(new Set(data.map(d => d.groupe))))
+        .range(["steelblue", "orange"]);*/
+
+        const groupes = Array.from(new Set(data.map(d => d.groupe)));
+
+        // Générer une gamme dynamique de couleurs
+        const colorInterpolator = d3.scaleSequential(d3.interpolateTurbo)
+            .domain([0, groupes.length]);
+        const colorScale = d3.scaleOrdinal()
+            .domain(groupes)
+            .range(groupes.map((_, i) => colorInterpolator(i / (groupes.length - 1))));
+
+        // Ajout des axes
+        svg.append("g")
+            .attr("transform", `translate(0,${height})`)
+            .call(d3.axisBottom(xScale));
+
+        svg.append("g")
+            .call(d3.axisLeft(yScale));
+
+        // Création du scatterplot avec différentes couleurs pour chaque groupe
+        svg.selectAll("circle")
+            .data(data)
+            .join("circle")
+            .attr("cx", d => xScale(d.x))
+            .attr("cy", d => yScale(d.y))
+            .attr("r", 5)
+            .attr("fill", d => colorScale(d.groupe));
+    }
+</script>
+</body>
